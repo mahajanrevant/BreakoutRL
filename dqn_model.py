@@ -30,6 +30,12 @@ class DQN(nn.Module):
         super(DQN, self).__init__()
         ###########################
         # YOUR IMPLEMENTATION HERE #
+        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=16, kernel_size=3)
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=5)
+        self.fc1 = nn.Linear(in_features= 32*18*18, out_features=256)
+        self.fc2 = nn.Linear(in_features= 256, out_features=128)
+        self.fc3 = nn.Linear(in_features=128, out_features=num_actions)
 
     def forward(self, x):
         """
@@ -39,6 +45,11 @@ class DQN(nn.Module):
         """
         ###########################
         # YOUR IMPLEMENTATION HERE #
-
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 32*18*18)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
         ###########################
         return x
