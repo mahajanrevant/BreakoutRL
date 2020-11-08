@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import random
 import numpy as np
+import math
 from collections import deque
 import os
 import sys
@@ -19,9 +20,6 @@ you can import any package and define any extra function as you need
 torch.manual_seed(595)
 np.random.seed(595)
 random.seed(595)
-
-Transition = namedtuple('Transition',
-                        ('state', 'action', 'next_state', 'reward'))
 
 class Agent_DQN(Agent):
     def __init__(self, env, args):
@@ -48,7 +46,6 @@ class Agent_DQN(Agent):
         self.buffer = deque(maxlen=self.buffer_max_len)
 
         # paramters for neural network
-        self.model = None
         self.batch_size = 32
         self.gamma = 0.999
         self.eps_start = 0.9
@@ -57,23 +54,25 @@ class Agent_DQN(Agent):
         self.target_decay = 10
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-        # Neural Network
-        self.policy_net = DQN()
-        self.target_net = DQN()
-        
         #Training
         self.max_steps = 50
         self.steps_done = 0
-        self.num_episode = 50
+        self.num_episode = 1
         self.target_update = 10
-
-
+        self.learning_rate = 1.5e-4
+        
+        # Neural Network
+        self.policy_net = DQN()
+        self.target_net = DQN()
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=self.learning_rate)
+        
         if args.test_dqn:
             #you can load your model here
             print('loading trained model')
             ###########################
             # YOUR IMPLEMENTATION HERE #
-            self.policy_net = torch.load()
+            # Use this to load a model
+            # self.policy_net = torch.load()
 
     def init_game_setting(self):
         """
@@ -113,7 +112,7 @@ class Agent_DQN(Agent):
              device=self.device, dtype=torch.long)
         ###########################
     
-    def push(self, state, reward, action, done):
+    def push(self, state, reward, action, next_state, done):
         """ You can add additional arguments as you need. 
         Push new data to buffer and remove the old one if the buffer is full.
         
@@ -123,7 +122,7 @@ class Agent_DQN(Agent):
         """
         ###########################
         # YOUR IMPLEMENTATION HERE #
-        self.buffer.append((state, reward, action, done))
+        self.buffer.append((state, reward, action, next_state, done))
         ###########################
         
         
@@ -134,18 +133,37 @@ class Agent_DQN(Agent):
         ###########################
         # YOUR IMPLEMENTATION HERE #
         batch = random.sample(self.buffer, batch_size)
+        states = []
+        rewards = []
+        actions = []
+        next_states = []
+        dones = []
+        for sample in batch:
+            state, reward, action, next_state, done = sample
+            states.append(state)
+            rewards.append(reward)
+            actions.append(action)
+            next_states.append(next_state)
+            dones.append(done)
         ###########################
-        return batch
+        return states, rewards, actions, next_states, dones
 
     def update(self):
         if len(self.buffer) < self.batch_size:
             return
-        batch = self.replay_buffer()
+        loss = self.compute_loss(self.replay_buffer(self.batch_size))
+        self.optimizer.zero_grad()
+        loss.backwards()
+        self.optimizer.step()
 
-        
+    def compute_loss(self, states, rewards, actions, next_states, dones):
+        states = torch.tensor(states, dtype=torch.float).to(self.device)
+        rewards = torch.tensor(rewards, dtype=torch.float).to(self.device)
+        actions = torch.tensor(actions, dtype=torch.int).to(self.device)
+        next_states = torch.tensor(next_states, dtype=torch.float).to(self.device)
+        dones = torch.tensor(dones, dtype=torch.int).to(self.device)
 
-    def compute_loss(self, batch):
-        pass    
+        Q_current = self.policy_net.forward(states).gather(1, actions.unsqueeze(1))
 
     def train(self):
         """
@@ -153,22 +171,23 @@ class Agent_DQN(Agent):
         """
         ###########################
         # YOUR IMPLEMENTATION HERE #
-        episode_rewards = []
+        print("I am here")
         for episode in range(self.num_episode):
             observation = self.env.reset()
+            print(len(observation))
             done = False
 
             ## Not sure if this is the right way to do this?
             for step in range(self.max_steps):
                 action = self.make_action(observation)
                 new_observation, reward, done, _ = env.step(action)
-                self.push(observation, reward, action, done)
+                self.push(observation, reward, action, new_observation, done)
 
                 ## Updating the network
                 self.update()
 
                 ##
-                if done or step == self.max_steps - 1:
+                if done:
                     break
 
                 observation = new_observation
