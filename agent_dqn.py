@@ -102,14 +102,13 @@ class Agent_DQN(Agent):
         sample = random.random()
         eps_threshold = self.eps_end + (self.eps_start - self.eps_end) * \
             math.exp(-1 * self.steps_done / self.eps_decay)
-        self.steps_done += 1
-
+        observation = torch.tensor(observation, dtype=torch.float).unsqueeze(0).permute(0,3,1,2)
+        
         if sample > eps_threshold:
             with torch.no_grad():
-                return self.policy_net(observation).max(1)[1].view(1, 1)
+                return self.policy_net(observation).max(1)[1].item()
         else:
-            return torch.tensor([[random.randrange(self.num_actions)]],
-             device=self.device, dtype=torch.long)
+            return self.env.action_space.sample()
         ###########################
     
     def push(self, state, reward, action, next_state, done):
@@ -174,7 +173,6 @@ class Agent_DQN(Agent):
         print("I am here")
         for episode in range(self.num_episode):
             observation = self.env.reset()
-            print(len(observation))
             done = False
 
             ## Not sure if this is the right way to do this?
