@@ -32,48 +32,46 @@ class Agent_DQN(Agent):
             parameters for q-learning; decaying epsilon-greedy
             ...
         """
-
         super(Agent_DQN,self).__init__(env)
         ###########################
         # YOUR IMPLEMENTATION HERE #
-        
-        
         #Gym parameters
         self.num_actions = env.action_space.n
         
         # parameters for repaly buffer
-        self.buffer_max_len = 10000
+        self.buffer_max_len = 20000
         self.buffer = deque(maxlen=self.buffer_max_len)
+        self.episode_reward_list = []
+        self.moving_reward_avg = []
 
         # paramters for neural network
         self.batch_size = 32
         self.gamma = 0.999
-        self.eps_start = 0.9
-        self.eps_end = 0.05
-        self.eps_decay = 200
-        self.target_decay = 10
+        self.eps_threshold = 0
+        self.eps_start = 1
+        self.eps_end = 0.025
+        self.max_expisode_decay = 10000
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         #Training
-        self.max_steps = 50
         self.steps_done = 0
-        self.num_episode = 1
-        self.target_update = 10
+        self.num_episode = 20000
+        self.target_update = 5000
         self.learning_rate = 1.5e-4
         
         # Neural Network
-        self.policy_net = DQN()
-        self.target_net = DQN()
+        self.policy_net = DQN().to(self.device)
+        self.target_net = DQN().to(self.device)
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=self.learning_rate)
         
         if args.test_dqn:
             #you can load your model here
             print('loading trained model')
+            self.policy_net = torch.load('policy_net.hb5')
+            self.policy_net.eval()
             ###########################
             # YOUR IMPLEMENTATION HERE #
-            # Use this to load a model
-            # self.policy_net = torch.load()
-
+    
     def init_game_setting(self):
         """
         Testing function will call this function at the begining of new game
@@ -99,16 +97,22 @@ class Agent_DQN(Agent):
         """
         ###########################
         # YOUR IMPLEMENTATION HERE #
-        sample = random.random()
-        eps_threshold = self.eps_end + (self.eps_start - self.eps_end) * \
-            math.exp(-1 * self.steps_done / self.eps_decay)
-        observation = torch.tensor(observation, dtype=torch.float).unsqueeze(0).permute(0,3,1,2)
-        
-        if sample > eps_threshold:
-            with torch.no_grad():
+        with torch.no_grad():
+            sample = random.random()
+
+            ## Check if this is the best way to decline
+            observation = torch.tensor(observation, dtype=torch.float, device=self.device).permute(2,0,1).unsqueeze(0)
+
+            if test:
+                print("testing")
                 return self.policy_net(observation).max(1)[1].item()
-        else:
-            return self.env.action_space.sample()
+
+            if sample > self.eps_threshold:
+                #print("Above threshold")
+                    return self.policy_net(observation).max(1)[1].item()
+            else:
+                #print("Below Threshold")
+                return self.env.action_space.sample()
         ###########################
     
     def push(self, state, reward, action, next_state, done):
@@ -148,48 +152,80 @@ class Agent_DQN(Agent):
         return states, rewards, actions, next_states, dones
 
     def update(self):
-        if len(self.buffer) < self.batch_size:
+        if self.steps_done < 5000:
             return
-        loss = self.compute_loss(self.replay_buffer(self.batch_size))
+        states, rewards, actions, next_states, dones = self.replay_buffer(self.batch_size)
+        loss = self.compute_loss(states, rewards, actions, next_states, dones)
         self.optimizer.zero_grad()
-        loss.backwards()
+        loss.backward()
+        for param in self.policy_net.parameters():
+            param.grad.data.clamp(-1,1)
         self.optimizer.step()
 
     def compute_loss(self, states, rewards, actions, next_states, dones):
-        states = torch.tensor(states, dtype=torch.float).to(self.device)
+        non_final_mask = [not done for done in dones]
+             
+        states = torch.tensor(states, dtype=torch.float).permute(0,3,1,2).to(self.device)
         rewards = torch.tensor(rewards, dtype=torch.float).to(self.device)
-        actions = torch.tensor(actions, dtype=torch.int).to(self.device)
-        next_states = torch.tensor(next_states, dtype=torch.float).to(self.device)
-        dones = torch.tensor(dones, dtype=torch.int).to(self.device)
-
+        actions = torch.tensor(actions, dtype=torch.long).to(self.device)
+        next_states = torch.tensor(next_states, dtype=torch.float).permute(0,3,1,2).to(self.device)
+        dones = torch.tensor(dones, dtype=torch.long).to(self.device)
+        
         Q_current = self.policy_net.forward(states).gather(1, actions.unsqueeze(1))
+        Q_current = Q_current.squeeze(1)
+        ## Should do this with no grad
 
+        next_state_values = torch.zeros(self.batch_size, device=self.device)
+        next_state_values[non_final_mask] = self.target_net(next_states[non_final_mask]).max(1)[0].detach()
+        expected_state_action_values = (next_state_values * self.gamma) + rewards
+        
+        loss = F.smooth_l1_loss(Q_current, expected_state_action_values)
+        
+        del states, rewards, actions, next_states, dones, Q_current, next_state_values, expected_state_action_values
+        
+        return loss
+        
     def train(self):
         """
         Implement your training algorithm here
         """
         ###########################
         # YOUR IMPLEMENTATION HERE #
-        print("I am here")
+        
         for episode in range(self.num_episode):
-            observation = self.env.reset()
+            #Check this please
+            observation = self.env.reset() / 255
+            
+            self.eps_threshold = max(1 + (((self.eps_end - self.eps_start)/self.max_expisode_decay) * episode),
+                                     self.eps_end)
+            episode_steps = 0
             done = False
-
+            episode_reward = 0
             ## Not sure if this is the right way to do this?
-            for step in range(self.max_steps):
-                action = self.make_action(observation)
-                new_observation, reward, done, _ = env.step(action)
+            while not done:
+                action = self.make_action(observation, test=False)
+                new_observation, reward, done, _ = self.env.step(action)
+                
+                new_observation = new_observation / 255
+                episode_reward += reward
+                self.steps_done += 1
+                episode_steps += 1
+                
                 self.push(observation, reward, action, new_observation, done)
-
+                
                 ## Updating the network
                 self.update()
 
-                ##
-                if done:
-                    break
-
                 observation = new_observation
 
-                if episode % self.target_update == 0:
+                if self.steps_done % self.target_update == 0:
                     self.target_net.load_state_dict(self.policy_net.state_dict())
+            self.episode_reward_list.append(episode_reward)
+          
+            if episode % 100 == 0:
+                print('episode: {} reward: {} episode length: {}'.format(episode,
+                                                                        episode_reward,
+                                                                        episode_steps))
+                torch.save(self.policy_net.state_dict(), 'test_model.pt')
         ###########################
+        print("Done")
