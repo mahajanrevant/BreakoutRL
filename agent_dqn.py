@@ -67,7 +67,7 @@ class Agent_DQN(Agent):
         if args.test_dqn:
             #you can load your model here
             print('loading trained model')
-            self.policy_net = torch.load('policy_net.hb5')
+            self.policy_net.load_state_dict(torch.load("test_model.pt"))
             self.policy_net.eval()
             ###########################
             # YOUR IMPLEMENTATION HERE #
@@ -104,7 +104,6 @@ class Agent_DQN(Agent):
             observation = torch.tensor(observation, dtype=torch.float, device=self.device).permute(2,0,1).unsqueeze(0)
 
             if test:
-                print("testing")
                 return self.policy_net(observation).max(1)[1].item()
 
             if sample > self.eps_threshold:
