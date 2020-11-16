@@ -8,11 +8,16 @@ import os
 import sys
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
 from agent import Agent
 from dqn_model import DQN
+from dueling_dqn_model import DuelingDQN
+
+from environment import Environment
+from agent import Agent
 """
 you can import any package and define any extra function as you need
 """
@@ -35,39 +40,49 @@ class Agent_DQN(Agent):
         super(Agent_DQN,self).__init__(env)
         ###########################
         # YOUR IMPLEMENTATION HERE #
+        
         #Gym parameters
         self.num_actions = env.action_space.n
         
-        # parameters for repaly buffer
+        #Buffer
         self.buffer_max_len = 20000
         self.buffer = deque(maxlen=self.buffer_max_len)
+        
+        #Training Parameters
+        self.num_episodes = 30000
+        self.batch_size = 32
+        self.learning_rate = 1.5e-4
+        self.steps_done = 0
+        self.target_update = 5000
+        self.step_start_learning = 5000
+        self.gamma = 0.999
+        self.epsilon_start = 1
+        self.epsilon_end = 0.025
+        self.epsilon_decay_steps = 100000
+        self.epsilon = 1
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        print(self.device)
+        #TODO: Print this out and see this
+        self.delta_epsilon = (self.epsilon_start - self.epsilon_end)/self.epsilon_decay_steps
+            
+        #Model
+        self.policy_net = DuelingDQN().to(self.device)
+        self.target_net = DuelingDQN().to(self.device)
+        self.target_net.load_state_dict(self.policy_net.state_dict())
+        self.target_net.eval()
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=self.learning_rate)
+        self.loss_fn = nn.SmoothL1Loss()
+        
+        #Values to be printed
         self.episode_reward_list = []
         self.moving_reward_avg = []
-
-        # paramters for neural network
-        self.batch_size = 32
-        self.gamma = 0.999
-        self.eps_threshold = 0
-        self.eps_start = 1
-        self.eps_end = 0.025
-        self.max_expisode_decay = 10000
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-        #Training
-        self.steps_done = 0
-        self.num_episode = 20000
-        self.target_update = 5000
-        self.learning_rate = 1.5e-4
         
-        # Neural Network
-        self.policy_net = DQN().to(self.device)
-        self.target_net = DQN().to(self.device)
-        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=self.learning_rate)
-        
-        if args.test_dqn:
+        if args is not None and args.test_dqn:
             #you can load your model here
             print('loading trained model')
-            self.policy_net.load_state_dict(torch.load("test_model.pt"))
+            
+            self.policy_net = DuelingDQN()
+            self.policy_net.load_state_dict(torch.load("test_model.pt", map_location=torch.device('cpu')))
             self.policy_net.eval()
             ###########################
             # YOUR IMPLEMENTATION HERE #
@@ -98,20 +113,20 @@ class Agent_DQN(Agent):
         ###########################
         # YOUR IMPLEMENTATION HERE #
         with torch.no_grad():
-            sample = random.random()
-
-            ## Check if this is the best way to decline
-            observation = torch.tensor(observation, dtype=torch.float, device=self.device).permute(2,0,1).unsqueeze(0)
-
+            observation_np = np.array(observation, dtype=np.float32)
+            observation_tensor = torch.as_tensor(np.expand_dims(observation_np / 255., axis=0),
+                                            device=self.device).permute(0,3,1,2)
+            #TODO: Change this to test_net?
             if test:
-                return self.policy_net(observation).max(1)[1].item()
-
-            if sample > self.eps_threshold:
-                #print("Above threshold")
-                    return self.policy_net(observation).max(1)[1].item()
+                return self.policy_net(observation_tensor).max(1)[1].item()
+            
+            result = np.random.uniform()         
+            
+            ## Possibly put this on CPU?
+            if result > self.epsilon:
+                return self.policy_net(observation_tensor).max(1)[1].item()
             else:
-                #print("Below Threshold")
-                return self.env.action_space.sample()
+                return self.env.action_space.sample() 
         ###########################
     
     def push(self, state, reward, action, next_state, done):
@@ -147,43 +162,75 @@ class Agent_DQN(Agent):
             actions.append(action)
             next_states.append(next_state)
             dones.append(done)
+        states = torch.as_tensor(np.array(states), device=self.device)
+        actions = torch.as_tensor(np.array(actions), device=self.device)
+        rewards = torch.as_tensor(np.array(rewards, dtype=np.float32),
+                                  device=self.device)
+        next_states = torch.as_tensor(np.array(next_states), device=self.device)
+        dones = torch.as_tensor(np.array(dones, dtype=np.float32),
+                                device=self.device)
         ###########################
         return states, rewards, actions, next_states, dones
 
     def update(self):
-        if self.steps_done < 5000:
-            return
+        
+        if len(self.buffer) < self.step_start_learning:
+            return     
+        
+        if self.epsilon > self.epsilon_end:
+            self.epsilon -= self.delta_epsilon
+        
         states, rewards, actions, next_states, dones = self.replay_buffer(self.batch_size)
+        states = states.type(torch.FloatTensor).to(self.device).permute(0,3,1,2) / 255.
+        next_states = next_states.type(torch.FloatTensor).to(self.device).permute(0,3,1,2) / 255.        
         loss = self.compute_loss(states, rewards, actions, next_states, dones)
         self.optimizer.zero_grad()
         loss.backward()
+        # Check this
         for param in self.policy_net.parameters():
             param.grad.data.clamp(-1,1)
         self.optimizer.step()
+        return loss
 
     def compute_loss(self, states, rewards, actions, next_states, dones):
         non_final_mask = [not done for done in dones]
-             
-        states = torch.tensor(states, dtype=torch.float).permute(0,3,1,2).to(self.device)
-        rewards = torch.tensor(rewards, dtype=torch.float).to(self.device)
-        actions = torch.tensor(actions, dtype=torch.long).to(self.device)
-        next_states = torch.tensor(next_states, dtype=torch.float).permute(0,3,1,2).to(self.device)
-        dones = torch.tensor(dones, dtype=torch.long).to(self.device)
-        
+            
         Q_current = self.policy_net.forward(states).gather(1, actions.unsqueeze(1))
         Q_current = Q_current.squeeze(1)
-        ## Should do this with no grad
 
         next_state_values = torch.zeros(self.batch_size, device=self.device)
         next_state_values[non_final_mask] = self.target_net(next_states[non_final_mask]).max(1)[0].detach()
         expected_state_action_values = (next_state_values * self.gamma) + rewards
         
-        loss = F.smooth_l1_loss(Q_current, expected_state_action_values)
+        ## Check if they come to the same thing after converging
+        loss = self.loss_fn(Q_current, expected_state_action_values.detach())
         
-        del states, rewards, actions, next_states, dones, Q_current, next_state_values, expected_state_action_values
+        del Q_current, next_state_values, expected_state_action_values
         
         return loss
         
+    def test(self): 
+        test_env = Environment('BreakoutNoFrameskip-v4', None, atari_wrapper=True, test=True)
+        agent = Agent_DQN(test_env, None)
+        rewards = []
+        seed = 11037
+        total_episodes=30
+        test_env.seed(seed)
+        for i in range(total_episodes):
+            state = test_env.reset()
+            done = False
+            episode_reward = 0.0
+
+            #playing one game
+            while(not done):
+                action = agent.make_action(state, test=True)
+                state, reward, done, info = test_env.step(action)
+                episode_reward += reward
+
+            rewards.append(episode_reward)
+        print('Run %d episodes'%(total_episodes))
+        print('Mean:', np.mean(rewards))
+    
     def train(self):
         """
         Implement your training algorithm here
@@ -191,40 +238,45 @@ class Agent_DQN(Agent):
         ###########################
         # YOUR IMPLEMENTATION HERE #
         
-        for episode in range(self.num_episode):
-            #Check this please
-            observation = self.env.reset() / 255
+        for episode in range(self.num_episodes):
             
-            self.eps_threshold = max(1 + (((self.eps_end - self.eps_start)/self.max_expisode_decay) * episode),
-                                     self.eps_end)
+            observation = self.env.reset()
             episode_steps = 0
-            done = False
             episode_reward = 0
-            ## Not sure if this is the right way to do this?
+            done = False
+            
             while not done:
+
                 action = self.make_action(observation, test=False)
                 new_observation, reward, done, _ = self.env.step(action)
                 
-                new_observation = new_observation / 255
                 episode_reward += reward
-                self.steps_done += 1
                 episode_steps += 1
+                self.steps_done += 1
                 
                 self.push(observation, reward, action, new_observation, done)
-                
-                ## Updating the network
-                self.update()
-
                 observation = new_observation
 
+                self.update()
+                
                 if self.steps_done % self.target_update == 0:
                     self.target_net.load_state_dict(self.policy_net.state_dict())
+            
             self.episode_reward_list.append(episode_reward)
-          
-            if episode % 100 == 0:
-                print('episode: {} reward: {} episode length: {}'.format(episode,
-                                                                        episode_reward,
+            self.moving_reward_avg.append(np.average(np.array(self.episode_reward_list[-30:])))
+
+            if episode % 25 == 0:
+                print('episode: {} epsilon: {} average reward: {} episode length: {}'.format(episode,
+                                                                        self.epsilon,
+                                                                        self.moving_reward_avg[-1],
                                                                         episode_steps))
                 torch.save(self.policy_net.state_dict(), 'test_model.pt')
-        ###########################
+                np_moving_reward_avg = np.array(self.moving_reward_avg)
+                np.savetxt("rewards.csv", np_moving_reward_avg, delimiter=",") 
+            
+            if episode % 500 == 0:
+                self.test()
+          
+        self.moving_reward_avg = np.array(self.moving_reward_avg)
+        np.savetxt("rewards.csv", self.moving_reward_avg, delimiter=",")            
         print("Done")
