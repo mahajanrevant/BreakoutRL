@@ -211,7 +211,6 @@ class Agent_DQN(Agent):
         
     def test(self): 
         test_env = Environment('BreakoutNoFrameskip-v4', None, atari_wrapper=True, test=True)
-        agent = Agent_DQN(test_env, None)
         rewards = []
         seed = 11037
         total_episodes=30
@@ -223,7 +222,7 @@ class Agent_DQN(Agent):
 
             #playing one game
             while(not done):
-                action = agent.make_action(state, test=True)
+                action = self.make_action(state, test=True)
                 state, reward, done, info = test_env.step(action)
                 episode_reward += reward
 
