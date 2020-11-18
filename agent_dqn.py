@@ -14,7 +14,6 @@ import torch.optim as optim
 
 from agent import Agent
 from dqn_model import DQN
-from dueling_dqn_model import DuelingDQN
 
 from environment import Environment
 from agent import Agent
@@ -49,7 +48,7 @@ class Agent_DQN(Agent):
         self.buffer = deque(maxlen=self.buffer_max_len)
         
         #Training Parameters
-        self.num_episodes = 30000
+        self.num_episodes = 20000
         self.batch_size = 32
         self.learning_rate = 1.5e-4
         self.steps_done = 0
@@ -66,8 +65,8 @@ class Agent_DQN(Agent):
         self.delta_epsilon = (self.epsilon_start - self.epsilon_end)/self.epsilon_decay_steps
             
         #Model
-        self.policy_net = DuelingDQN().to(self.device)
-        self.target_net = DuelingDQN().to(self.device)
+        self.policy_net = DQN().to(self.device)
+        self.target_net = DQN().to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=self.learning_rate)
@@ -81,8 +80,8 @@ class Agent_DQN(Agent):
             #you can load your model here
             print('loading trained model')
             
-            self.policy_net = DuelingDQN()
-            self.policy_net.load_state_dict(torch.load("test_model.pt", map_location=torch.device('cpu')))
+            self.policy_net = DQN()
+            self.policy_net.load_state_dict(torch.load("test_model.pth", map_location=self.device))
             self.policy_net.eval()
             ###########################
             # YOUR IMPLEMENTATION HERE #
@@ -269,7 +268,7 @@ class Agent_DQN(Agent):
                                                                         self.epsilon,
                                                                         self.moving_reward_avg[-1],
                                                                         episode_steps))
-                torch.save(self.policy_net.state_dict(), 'test_model.pt')
+                torch.save(self.policy_net.state_dict(), 'test_model.pth')
                 np_moving_reward_avg = np.array(self.moving_reward_avg)
                 np.savetxt("rewards.csv", np_moving_reward_avg, delimiter=",") 
             

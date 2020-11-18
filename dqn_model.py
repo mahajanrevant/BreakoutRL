@@ -30,17 +30,12 @@ class DQN(nn.Module):
         super(DQN, self).__init__()
         ###########################
         # YOUR IMPLEMENTATION HERE #
-        # self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=16, kernel_size=3)
-        # self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        # self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=5)
-        # self.fc1 = nn.Linear(in_features= 32*18*18, out_features=256)
-        # self.fc2 = nn.Linear(in_features= 256, out_features=128)
-        # self.fc3 = nn.Linear(in_features=128, out_features=num_actions)
-
-        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=16, kernel_size=8, stride=4)
-        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2)
-        self.fc1 = nn.Linear(in_features= 32*9*9, out_features=256)
-        self.fc2 = nn.Linear(in_features=256, out_features=num_actions)
+        self.conv1 = nn.Conv2d(in_channels=4, out_channels=32, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2)
+        self.conv3 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1)
+        self.fc1 = nn.Linear(in_features=64*7*7, out_features=512)
+        self.V = nn.Linear(in_features=512, out_features=1)
+        self.A = nn.Linear(in_features=512, out_features=num_actions)
 
     def forward(self, x):
         """
@@ -50,17 +45,13 @@ class DQN(nn.Module):
         """
         ###########################
         # YOUR IMPLEMENTATION HERE #
-        # x = self.pool(F.relu(self.conv1(x)))
-        # x = self.pool(F.relu(self.conv2(x)))
-        # x = x.view(-1, 32*18*18)
-        # x = F.relu(self.fc1(x))
-        # x = F.relu(self.fc2(x))
-        # x = self.fc3(x)
-
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
-        x = x.view(-1, 32*9*9)
+        x = F.relu(self.conv3(x))
+        #x = x.view(x.size(0), -1)
+        x = x.contiguous().view(x.size(0), -1)
         x = F.relu(self.fc1(x))
-        x = self.fc2(x)
-        ###########################
-        return x
+        V = self.V(x)
+        A = self.A(x)
+        Q = V + (A - A.mean(dim=1, keepdim=True))
+        return Q
